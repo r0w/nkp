@@ -133,7 +133,8 @@ metadata:
     nginx.ingress.kubernetes.io/ssl-redirect: "false"
 spec:
   rules:
-  - http:
+  - host: anythingllm.local
+    http:
       paths:
       - path: /
         pathType: Prefix
@@ -142,3 +143,4 @@ spec:
             name: anything-llm-svc
             port:
               number: 3001
+
