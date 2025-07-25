@@ -123,33 +123,6 @@ spec:
           persistentVolumeClaim:
             claimName: anything-llm-volume-claim
 ---
-# This serves the UI and the backend.
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: anything-llm-ingress
-  annotations:
-    external-dns.alpha.kubernetes.io/hostname: tke-anythingllm.ntnxlab.ch
-    kubernetes.io/ingress.class: "internal-ingress"
-    nginx.ingress.kubernetes.io/rewrite-target: /
-    ingress.kubernetes.io/ssl-redirect: "false"
-spec:
-  rules:
-  - host: tke-anythingllm.ntnxlab.ch
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: anything-llm-svc
-            port: 
-              number: 3001
-  tls: # < placing a host in the TLS config will indicate a cert should be created
-    - hosts:
-        - tke-anythingllm.ntnxlab.ch
-      secretName: letsencrypt-prod
----
 apiVersion: v1
 kind: Service
 metadata:
