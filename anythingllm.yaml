@@ -2,141 +2,83 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: anything-llm-volume-claim
+  name: pvc-anythingllm
+  namespace: ai
 spec:
   accessModes:
     - ReadWriteOnce
+  storageClassName: nutanix-volume
   resources:
     requests:
-      storage: 5Gi
-  storageClassName: nutanix-volume
+      storage: 10Gi
+
 ---
-apiVersion: apps/v1
-kind: Deployment
+kind: Service
+apiVersion: v1
 metadata:
-  name: anything-llm
-  labels:
-    anything-llm: "true"
+  name: anythingllm
+  namespace: ai
+  annotations:
+    metallb.universe.tf/allow-shared-ip: "123456"
 spec:
+  ports:
+    - name: anythingllm
+      port: 3001
+      targetPort: anythingllm
+  type: LoadBalancer
+  selector:
+    app: anythingllm
+
+---
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  namespace: ai
+  name: anythingllm
+  labels:
+    app: anythingllm
+spec:
+  replicas: 1
   selector:
     matchLabels:
-      k8s-app: anything-llm
-  replicas: 1
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
+      app: anythingllm
   template:
     metadata:
       labels:
-        anything-llm: "true"
-        k8s-app: anything-llm
-        app.kubernetes.io/name: anything-llm
-        app.kubernetes.io/part-of: anything-llm
-      annotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/path: /metrics
-        prometheus.io/port: "9090"
+        app: anythingllm
     spec:
-      serviceAccountName: "default"
-      terminationGracePeriodSeconds: 10
-      securityContext:                                                                                                                                                              
-        fsGroup: 1000
-        runAsNonRoot: true                                                                                                                                                          
-        runAsGroup: 1000
-        runAsUser: 1000 
-      containers:
-      - name: anything-llm
-        resources:
-          limits:
-            memory: "1Gi"
-            cpu: "500m"
-          requests:
-            memory: "512Mi"
-            cpu: "250m"
-        imagePullPolicy: IfNotPresent
-        image: "mintplexlabs/anythingllm:render"
-        securityContext:                     
-          allowPrivilegeEscalation: true                                                                                                                                                                                                                                                 
-          capabilities:                                                                                                                                                                                                                                                                  
-            add:                                                                                                                                                                                                                                                                         
-              - SYS_ADMIN                                                                                                                                                                                                                                                                
-          runAsNonRoot: true                                                                                                                                                                                                                                                             
-          runAsGroup: 1000                                                                                                                                                                                                                                                               
-          runAsUser: 1000                                                                                                                                       
-        command: 
-          # Specify a command to override the Dockerfile's ENTRYPOINT.
-          - /bin/bash
-          - -c
-          - |
-            set -x -e
-            sleep 3
-            echo "SERVER_PORT: $SERVER_PORT"
-            echo "NODE_ENV: $NODE_ENV"
-            echo "STORAGE_DIR: $STORAGE_DIR"
-            {
-              cd /app/server/ &&
-                npx prisma generate --schema=./prisma/schema.prisma &&
-                npx prisma migrate deploy --schema=./prisma/schema.prisma &&
-                node /app/server/index.js
-              echo "Server process exited with status $?"
-            } &
-            { 
-              node /app/collector/index.js
-              echo "Collector process exited with status $?"
-            } &
-            wait -n
-            exit $?
-        readinessProbe:
-          httpGet:
-            path: /v1/api/health
-            port: 8888
-          initialDelaySeconds: 15
-          periodSeconds: 5
-          successThreshold: 2
-        livenessProbe:
-          httpGet:
-            path: /v1/api/health
-            port: 8888
-          initialDelaySeconds: 15
-          periodSeconds: 5
-          failureThreshold: 3
-        env:
-          - name: SERVER_PORT
-            value: "3001"
-          - name: JWT_SECRET
-            value: "tke-nai-anythingllm" # Please generate random string at least 12 chars long.
-          - name: STORAGE_DIR
-            value: "/storage"
-          - name: NODE_ENV
-            value: "production"
-          - name: UID
-            value: "1000"
-          - name: GID
-            value: "1000"
-        volumeMounts: 
-          - name: anything-llm-server-storage-volume-mount
-            mountPath: /storage                                                                                                                                                  
       volumes:
-        - name: anything-llm-server-storage-volume-mount
+        - name: volume-anythingllm
           persistentVolumeClaim:
-            claimName: anything-llm-volume-claim
----
-apiVersion: v1
-kind: Service
-metadata:
-  labels:
-    kubernetes.io/name: anything-llm
-  name: anything-llm-svc
-spec:
-  ports:
-  # "port" is external port, and "targetPort" is internal.
-  - port: 3301
-    targetPort: 3001
-    name: traffic
-  - port: 9090
-    targetPort: 9090
-    name: metrics
-  selector:
-    k8s-app: anything-llm
+            claimName: pvc-anythingllm
+      
+      initContainers:
+      - name: init-create-subdir
+        image: busybox
+        command: ["sh", "-c", "mkdir -p /app/server/storage && touch /app/server/storage/.env && chown -R 1000:1000 /app/server/storage && ls -al /app/server/storage"]
+        volumeMounts:
+          - name: volume-anythingllm
+            mountPath: /app/server/storage
+
+      containers:
+      - name: anythingllm
+        image: mintplexlabs/anythingllm
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          capabilities:
+            add: ["SYS_ADMIN"]
+          allowPrivilegeEscalation: false
+        volumeMounts:
+         - name: volume-anythingllm
+           mountPath: /app/server/.env
+           subPath: .env
+         - name: volume-anythingllm
+           mountPath: /app/server/storage
+        ports:
+          - name: anythingllm
+            containerPort: 3001
+        env:
+          - name: STORAGE_DIR
+            value: /app/server/storage
+          - name: TZ
+            value: Europe/Zurich
